@@ -27,6 +27,7 @@ def test_load_settings_parses_required_environment(monkeypatch: pytest.MonkeyPat
     assert settings.admin_telegram_ids == (111, 222)
     assert settings.main_chat_id == -1001234567890
     assert settings.timezone == "Europe/Moscow"
+    assert settings.database_url == REQUIRED_ENV["DATABASE_URL"]
     assert settings.log_level == "DEBUG"
 
 

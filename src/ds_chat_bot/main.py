@@ -1,0 +1,63 @@
+"""Application entry point for long-polling Telegram bot startup."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+
+from ds_chat_bot.config import SettingsError, load_settings
+from ds_chat_bot.handlers import router
+
+logger = logging.getLogger(__name__)
+
+
+def configure_logging(level: str) -> None:
+    """Configure concise structured logging for local and container runs."""
+
+    logging.basicConfig(
+        level=level,
+        format="time=%(asctime)s level=%(levelname)s logger=%(name)s message=%(message)s",
+    )
+
+
+async def run_bot() -> None:
+    """Load settings and start the bot in long polling mode."""
+
+    settings = load_settings()
+    configure_logging(settings.log_level)
+
+    logger.info(
+        "bot_starting mode=long_polling timezone=%s main_chat_id=%s admins_count=%s",
+        settings.timezone,
+        settings.main_chat_id,
+        len(settings.admin_telegram_ids),
+    )
+
+    bot = Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    dispatcher = Dispatcher()
+    dispatcher.include_router(router)
+
+    logger.info("bot_running mode=long_polling")
+    await dispatcher.start_polling(bot)
+
+
+def main() -> None:
+    """Synchronous console entry point with fail-fast configuration errors."""
+
+    try:
+        asyncio.run(run_bot())
+    except SettingsError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+if __name__ == "__main__":
+    main()

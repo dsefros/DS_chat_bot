@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Local database artifacts
+*.sqlite
+*.sqlite3
+*.db
+postgres-data/
+pgdata/
+
+# IDE/editor
+.idea/
+.vscode/
+*.swp
+.DS_Store

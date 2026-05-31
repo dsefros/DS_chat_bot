@@ -19,6 +19,25 @@ def is_admin_telegram_id(telegram_id: int, admin_ids: tuple[int, ...]) -> bool:
     return telegram_id in admin_ids
 
 
+def is_profile_moderation_decided(status: str) -> bool:
+    """Return whether a profile moderation decision is already final."""
+
+    return status in {ProfileStatus.APPROVED.value, ProfileStatus.REJECTED.value}
+
+
+def profile_status_label(status: str) -> str:
+    """Return a human-readable moderation status label for callback answers."""
+
+    labels = {
+        ProfileStatus.APPROVED.value: "одобрена",
+        ProfileStatus.REJECTED.value: "отклонена",
+        ProfileStatus.PENDING_REVIEW.value: "на проверке",
+        ProfileStatus.DRAFT.value: "черновик",
+        ProfileStatus.HIDDEN.value: "скрыта",
+    }
+    return labels.get(status, status)
+
+
 async def upsert_user_from_telegram(
     session: AsyncSession,
     telegram_user: Any,

@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ds_chat_bot.config import Settings
 from ds_chat_bot.db.constants import CATEGORIES, ProfileStatus
 from ds_chat_bot.keyboards import (
+    ACTIVE_FORM_CANCEL_TO_MENU_CALLBACK,
+    ACTIVE_FORM_CONTINUE_CALLBACK,
     ALLOW_CONTACT_NO_CALLBACK,
     ALLOW_CONTACT_YES_CALLBACK,
     CANCEL_CALLBACK,
@@ -23,30 +25,44 @@ from ds_chat_bot.keyboards import (
     MODERATE_PREFIX,
     PREVIEW_RESTART_CALLBACK,
     PREVIEW_SUBMIT_CALLBACK,
+    PROFILE_EDIT_CALLBACK,
+    PROFILE_RESTART_CALLBACK,
     PROFILE_START_CALLBACK,
     PROFILE_VIEW_CALLBACK,
     SKIP_CALLBACK,
+    USERNAME_ENTER_MANUAL_CALLBACK,
+    USERNAME_USE_DETECTED_CALLBACK,
+    active_questionnaire_keyboard,
     allow_contact_keyboard,
+    approval_navigation_keyboard,
     cancel_keyboard,
     categories_keyboard,
     existing_profile_keyboard,
+    main_reply_keyboard,
     moderation_keyboard,
     no_profile_keyboard,
     preview_keyboard,
+    profile_update_entry_keyboard,
+    rejection_navigation_keyboard,
     skip_cancel_keyboard,
+    username_confirmation_keyboard,
 )
 from ds_chat_bot.profile_utils import (
     STATUS_LABELS,
     format_admin_review,
+    format_detected_telegram_username,
     format_profile_preview,
     format_user_preview,
     is_valid_telegram_username,
     parse_optional_age,
+    stale_callback_message,
 )
 from ds_chat_bot.services import (
     get_profile_for_user,
     get_profile_with_user,
     is_admin_telegram_id,
+    is_profile_moderation_decided,
+    profile_status_label,
     save_profile_for_review,
     set_profile_status,
     upsert_user_from_telegram,
@@ -57,20 +73,16 @@ router = Router(name="profiles")
 
 OPTIONAL_FIELDS = {"company_site", "hobbies", "age", "city"}
 
-
-def _message_text(message: Message) -> str:
-    return (message.text or "").strip()
-
-
-async def _require_text(message: Message, prompt: str) -> str | None:
-    value = _message_text(message)
-    if value:
-        return value
-    await message.answer(
-        f"Это обязательное поле. Напиши ответ текстом.\n\n{prompt}",
-        reply_markup=cancel_keyboard(),
-    )
-    return None
+TELEGRAM_USERNAME_PROMPT = "Напиши свой ник в Telegram в формате @username."
+ALLOW_CONTACT_PROMPT = (
+    "Разрешаешь показывать твой Telegram-ник участникам, "
+    "которые нажмут «Интересно» на твоей анкете?"
+)
+EDIT_RESTART_NOTICE = (
+    "Сейчас нужно пройти анкету заново. "
+    "Старая версия останется без изменений до отправки новой версии на проверку."
+)
+STALE_CALLBACK_ALERT = "Эта кнопка уже неактуальна."
 
 
 class ProfileForm(StatesGroup):
@@ -87,6 +99,49 @@ class ProfileForm(StatesGroup):
     telegram_username = State()
     allow_contact_reveal = State()
     preview = State()
+
+
+QUESTIONNAIRE_STATES = {state.state for state in ProfileForm.__states__}
+STALE_CALLBACK_DATA = {
+    PREVIEW_SUBMIT_CALLBACK,
+    PREVIEW_RESTART_CALLBACK,
+    ALLOW_CONTACT_YES_CALLBACK,
+    ALLOW_CONTACT_NO_CALLBACK,
+    USERNAME_USE_DETECTED_CALLBACK,
+    USERNAME_ENTER_MANUAL_CALLBACK,
+    SKIP_CALLBACK,
+    CANCEL_CALLBACK,
+}
+
+
+def _message_text(message: Message) -> str:
+    return (message.text or "").strip()
+
+
+def is_questionnaire_state(raw_state: str | None) -> bool:
+    """Return whether an FSM state belongs to the profile questionnaire."""
+
+    return raw_state in QUESTIONNAIRE_STATES
+
+
+async def _safe_remove_inline_keyboard(callback: CallbackQuery) -> None:
+    if not callback.message:
+        return
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception as exc:  # noqa: BLE001 - old Telegram messages may be immutable.
+        logger.debug("inline_keyboard_remove_failed callback_data=%s error=%r", callback.data, exc)
+
+
+async def _require_text(message: Message, prompt: str) -> str | None:
+    value = _message_text(message)
+    if value:
+        return value
+    await message.answer(
+        f"Это обязательное поле. Напиши ответ текстом.\n\n{prompt}",
+        reply_markup=cancel_keyboard(),
+    )
+    return None
 
 
 async def _upsert_current_user(
@@ -107,19 +162,69 @@ async def start_questionnaire(message: Message, state: FSMContext) -> None:
     await message.answer("Как тебя зовут?", reply_markup=cancel_keyboard())
 
 
+async def _ask_manual_telegram_username(message: Message) -> None:
+    await message.answer(TELEGRAM_USERNAME_PROMPT, reply_markup=cancel_keyboard())
+
+
+async def _ask_allow_contact_reveal(message: Message, state: FSMContext) -> None:
+    await state.set_state(ProfileForm.allow_contact_reveal)
+    await message.answer(ALLOW_CONTACT_PROMPT, reply_markup=allow_contact_keyboard())
+
+
+async def _ask_telegram_username(message: Message, state: FSMContext, telegram_user: Any) -> None:
+    await state.set_state(ProfileForm.telegram_username)
+    detected_username = format_detected_telegram_username(getattr(telegram_user, "username", None))
+    if detected_username is None:
+        await _ask_manual_telegram_username(message)
+        return
+
+    await state.update_data(detected_telegram_username=detected_username)
+    await message.answer(
+        f"Мы определили твой Telegram-ник: {detected_username}\n\nИспользовать его в анкете?",
+        reply_markup=username_confirmation_keyboard(),
+    )
+
+
+async def _show_stale_callback_fallback(callback: CallbackQuery) -> None:
+    await callback.answer(STALE_CALLBACK_ALERT)
+    if callback.message:
+        await callback.message.answer(stale_callback_message(), reply_markup=main_reply_keyboard())
+
+
+async def _show_active_questionnaire_guard(message: Message) -> None:
+    await message.answer(
+        "Ты сейчас заполняешь анкету. Что сделать?",
+        reply_markup=active_questionnaire_keyboard(),
+    )
+
+
 async def send_profile_view(message: Message, user_id: int, db_session: AsyncSession) -> None:
     profile = await get_profile_for_user(db_session, user_id)
     if profile is None:
         await message.answer(
             "У тебя пока нет анкеты.\n"
             "Заполни её, чтобы другие участники могли понять, чем ты занимаешься.",
-            reply_markup=no_profile_keyboard(),
+            reply_markup=main_reply_keyboard(),
         )
+        await message.answer("Что хочешь сделать?", reply_markup=no_profile_keyboard())
         return
 
     await message.answer(
         f"Твоя анкета:\n\n{format_profile_preview(profile, include_status=True)}",
-        reply_markup=existing_profile_keyboard(),
+        reply_markup=main_reply_keyboard(),
+    )
+    await message.answer("Что хочешь сделать дальше?", reply_markup=existing_profile_keyboard())
+
+
+async def send_profile_update_entry(message: Message, user_id: int, db_session: AsyncSession, state: FSMContext) -> None:
+    profile = await get_profile_for_user(db_session, user_id)
+    if profile is None:
+        await start_questionnaire(message, state)
+        return
+
+    await message.answer(
+        "У тебя уже есть анкета. Что хочешь сделать?",
+        reply_markup=profile_update_entry_keyboard(),
     )
 
 
@@ -149,17 +254,24 @@ async def handle_edit_profile_command(
     db_session: AsyncSession,
     settings: Settings,
 ) -> None:
-    await _upsert_current_user(message, db_session, settings)
-    await start_questionnaire(message, state)
+    user = await _upsert_current_user(message, db_session, settings)
+    if is_questionnaire_state(await state.get_state()):
+        await _show_active_questionnaire_guard(message)
+        return
+    await send_profile_update_entry(message, user.id, db_session, state)
 
 
 @router.message(Command("profile"))
 async def handle_profile_command(
     message: Message,
+    state: FSMContext,
     db_session: AsyncSession,
     settings: Settings,
 ) -> None:
     user = await _upsert_current_user(message, db_session, settings)
+    if is_questionnaire_state(await state.get_state()):
+        await _show_active_questionnaire_guard(message)
+        return
     await send_profile_view(message, user.id, db_session)
 
 
@@ -172,7 +284,7 @@ async def handle_cancel_command(
 ) -> None:
     await _upsert_current_user(message, db_session, settings)
     await state.clear()
-    await message.answer("Заполнение анкеты отменено.")
+    await message.answer("Заполнение анкеты отменено.", reply_markup=main_reply_keyboard())
 
 
 @router.callback_query(F.data == PROFILE_START_CALLBACK)
@@ -182,8 +294,49 @@ async def handle_profile_start_callback(
     db_session: AsyncSession,
     settings: Settings,
 ) -> None:
-    await _upsert_current_user(callback, db_session, settings)
+    user = await _upsert_current_user(callback, db_session, settings)
+    if is_questionnaire_state(await state.get_state()):
+        await callback.answer()
+        if callback.message:
+            await callback.message.answer(
+                "Ты сейчас заполняешь анкету. Что сделать?",
+                reply_markup=active_questionnaire_keyboard(),
+            )
+        return
     await callback.answer()
+    if callback.message:
+        await send_profile_update_entry(callback.message, user.id, db_session, state)
+
+
+@router.callback_query(F.data == PROFILE_EDIT_CALLBACK)
+async def handle_profile_edit_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    if is_questionnaire_state(await state.get_state()):
+        await callback.answer()
+        if callback.message:
+            await callback.message.answer(
+                "Ты сейчас заполняешь анкету. Что сделать?",
+                reply_markup=active_questionnaire_keyboard(),
+            )
+        return
+    await callback.answer()
+    await _safe_remove_inline_keyboard(callback)
+    if callback.message:
+        await callback.message.answer(EDIT_RESTART_NOTICE, reply_markup=main_reply_keyboard())
+        await start_questionnaire(callback.message, state)
+
+
+@router.callback_query(F.data == PROFILE_RESTART_CALLBACK)
+async def handle_profile_restart_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    if is_questionnaire_state(await state.get_state()):
+        await callback.answer()
+        if callback.message:
+            await callback.message.answer(
+                "Ты сейчас заполняешь анкету. Что сделать?",
+                reply_markup=active_questionnaire_keyboard(),
+            )
+        return
+    await callback.answer()
+    await _safe_remove_inline_keyboard(callback)
     if callback.message:
         await start_questionnaire(callback.message, state)
 
@@ -191,10 +344,19 @@ async def handle_profile_start_callback(
 @router.callback_query(F.data == PROFILE_VIEW_CALLBACK)
 async def handle_profile_view_callback(
     callback: CallbackQuery,
+    state: FSMContext,
     db_session: AsyncSession,
     settings: Settings,
 ) -> None:
     user = await _upsert_current_user(callback, db_session, settings)
+    if is_questionnaire_state(await state.get_state()):
+        await callback.answer()
+        if callback.message:
+            await callback.message.answer(
+                "Ты сейчас заполняешь анкету. Что сделать?",
+                reply_markup=active_questionnaire_keyboard(),
+            )
+        return
     await callback.answer()
     if callback.message:
         await send_profile_view(callback.message, user.id, db_session)
@@ -203,12 +365,21 @@ async def handle_profile_view_callback(
 @router.callback_query(F.data == CONNECT_MENU_CALLBACK)
 async def handle_connect_menu_callback(
     callback: CallbackQuery,
+    state: FSMContext,
     db_session: AsyncSession,
     settings: Settings,
 ) -> None:
     from ds_chat_bot.handlers import send_connect_menu
 
     await _upsert_current_user(callback, db_session, settings)
+    if is_questionnaire_state(await state.get_state()):
+        await callback.answer()
+        if callback.message:
+            await callback.message.answer(
+                "Ты сейчас заполняешь анкету. Что сделать?",
+                reply_markup=active_questionnaire_keyboard(),
+            )
+        return
     await callback.answer()
     if callback.message:
         await send_connect_menu(callback.message)
@@ -222,10 +393,45 @@ async def handle_cancel_callback(
     settings: Settings,
 ) -> None:
     await _upsert_current_user(callback, db_session, settings)
+    if not is_questionnaire_state(await state.get_state()):
+        await _show_stale_callback_fallback(callback)
+        return
     await state.clear()
     await callback.answer("Отменено")
+    await _safe_remove_inline_keyboard(callback)
     if callback.message:
-        await callback.message.answer("Заполнение анкеты отменено.")
+        await callback.message.answer("Заполнение анкеты отменено.", reply_markup=main_reply_keyboard())
+
+
+@router.callback_query(F.data == ACTIVE_FORM_CONTINUE_CALLBACK)
+async def handle_active_form_continue(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_questionnaire_state(await state.get_state()):
+        await callback.answer(STALE_CALLBACK_ALERT)
+        await _safe_remove_inline_keyboard(callback)
+        if callback.message:
+            await callback.message.answer(stale_callback_message(), reply_markup=main_reply_keyboard())
+        return
+
+    await callback.answer()
+    await _safe_remove_inline_keyboard(callback)
+    if callback.message:
+        await callback.message.answer(
+            "Продолжай с текущего шага. "
+            "Если не помнишь вопрос — нажми «Отменить и открыть меню» и начни заново.",
+            reply_markup=main_reply_keyboard(),
+        )
+
+
+@router.callback_query(F.data == ACTIVE_FORM_CANCEL_TO_MENU_CALLBACK)
+async def handle_active_form_cancel_to_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await callback.answer("Отменено")
+    await _safe_remove_inline_keyboard(callback)
+    if callback.message:
+        from ds_chat_bot.handlers import send_connect_menu
+
+        await callback.message.answer("Заполнение анкеты отменено.", reply_markup=main_reply_keyboard())
+        await send_connect_menu(callback.message)
 
 
 @router.message(ProfileForm.name)
@@ -257,6 +463,7 @@ async def process_category(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(category=category)
     await state.set_state(ProfileForm.position)
     await callback.answer()
+    await _safe_remove_inline_keyboard(callback)
     if callback.message:
         await callback.message.answer("Какая у тебя должность?", reply_markup=cancel_keyboard())
 
@@ -302,6 +509,7 @@ async def _store_optional_and_advance(
     message: Message,
     field: str,
     value: Any,
+    telegram_user: Any | None = None,
 ) -> None:
     await state.update_data(**{field: value})
     if field == "company_site":
@@ -317,8 +525,7 @@ async def _store_optional_and_advance(
         await state.set_state(ProfileForm.city)
         await message.answer("Твой город? Можно пропустить.", reply_markup=skip_cancel_keyboard())
     elif field == "city":
-        await state.set_state(ProfileForm.telegram_username)
-        await message.answer("Напиши свой ник в Telegram в формате @username.", reply_markup=cancel_keyboard())
+        await _ask_telegram_username(message, state, telegram_user or message.from_user)
 
 
 @router.callback_query(F.data == SKIP_CALLBACK)
@@ -326,11 +533,12 @@ async def handle_skip(callback: CallbackQuery, state: FSMContext) -> None:
     current_state = await state.get_state()
     field = current_state.rsplit(":", 1)[-1] if current_state else ""
     if field not in OPTIONAL_FIELDS:
-        await callback.answer("Это поле нельзя пропустить.", show_alert=True)
+        await _show_stale_callback_fallback(callback)
         return
     await callback.answer()
+    await _safe_remove_inline_keyboard(callback)
     if callback.message:
-        await _store_optional_and_advance(state, callback.message, field, None)
+        await _store_optional_and_advance(state, callback.message, field, None, callback.from_user)
 
 
 @router.message(ProfileForm.company_site)
@@ -358,7 +566,35 @@ async def process_age(message: Message, state: FSMContext) -> None:
 
 @router.message(ProfileForm.city)
 async def process_city(message: Message, state: FSMContext) -> None:
-    await _store_optional_and_advance(state, message, "city", _message_text(message))
+    await _store_optional_and_advance(state, message, "city", _message_text(message), message.from_user)
+
+
+@router.callback_query(ProfileForm.telegram_username, F.data == USERNAME_USE_DETECTED_CALLBACK)
+async def process_detected_telegram_username(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    detected_username = data.get("detected_telegram_username")
+    if not detected_username:
+        detected_username = format_detected_telegram_username(getattr(callback.from_user, "username", None))
+    if not detected_username:
+        await callback.answer("Не удалось определить Telegram-ник.", show_alert=True)
+        await _safe_remove_inline_keyboard(callback)
+        if callback.message:
+            await _ask_manual_telegram_username(callback.message)
+        return
+
+    await state.update_data(telegram_username=detected_username)
+    await callback.answer()
+    await _safe_remove_inline_keyboard(callback)
+    if callback.message:
+        await _ask_allow_contact_reveal(callback.message, state)
+
+
+@router.callback_query(ProfileForm.telegram_username, F.data == USERNAME_ENTER_MANUAL_CALLBACK)
+async def process_manual_telegram_username_choice(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await _safe_remove_inline_keyboard(callback)
+    if callback.message:
+        await _ask_manual_telegram_username(callback.message)
 
 
 @router.message(ProfileForm.telegram_username)
@@ -371,11 +607,7 @@ async def process_telegram_username(message: Message, state: FSMContext) -> None
         )
         return
     await state.update_data(telegram_username=username)
-    await state.set_state(ProfileForm.allow_contact_reveal)
-    await message.answer(
-        "Разрешаешь показывать твой Telegram-ник участникам, которые нажмут «Интересно» на твоей анкете?",
-        reply_markup=allow_contact_keyboard(),
-    )
+    await _ask_allow_contact_reveal(message, state)
 
 
 @router.callback_query(
@@ -387,6 +619,7 @@ async def process_allow_contact(callback: CallbackQuery, state: FSMContext) -> N
     data = await state.get_data()
     await state.set_state(ProfileForm.preview)
     await callback.answer()
+    await _safe_remove_inline_keyboard(callback)
     if callback.message:
         await callback.message.answer(format_user_preview(data), reply_markup=preview_keyboard())
 
@@ -394,6 +627,7 @@ async def process_allow_contact(callback: CallbackQuery, state: FSMContext) -> N
 @router.callback_query(ProfileForm.preview, F.data == PREVIEW_RESTART_CALLBACK)
 async def process_preview_restart(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
+    await _safe_remove_inline_keyboard(callback)
     if callback.message:
         await start_questionnaire(callback.message, state)
 
@@ -411,10 +645,11 @@ async def process_preview_submit(
     profile = await save_profile_for_review(db_session, user.id, data)
     await state.clear()
     await callback.answer("Отправлено на проверку")
+    await _safe_remove_inline_keyboard(callback)
     if callback.message:
         await callback.message.answer(
-            "Анкета отправлена на проверку.\n"
-            "После одобрения администратором она появится в разделе «Найти партнера»."
+            "Анкета отправлена на проверку. После одобрения администратором она появится в разделе «Найти партнера».",
+            reply_markup=main_reply_keyboard(),
         )
     await notify_admins(bot, settings, profile.id, db_session)
 
@@ -441,11 +676,15 @@ async def handle_moderation_callback(
     profile = await get_profile_with_user(db_session, profile_id)
     if profile is None:
         await callback.answer("Анкета не найдена.", show_alert=True)
+        await _safe_remove_inline_keyboard(callback)
         return
 
-    if profile.status in {ProfileStatus.APPROVED.value, ProfileStatus.REJECTED.value}:
-        label = STATUS_LABELS.get(profile.status, profile.status)
-        await callback.answer(f"Анкета уже имеет статус: {label}.", show_alert=True)
+    if is_profile_moderation_decided(profile.status):
+        await callback.answer(
+            f"Решение по этой анкете уже принято: {profile_status_label(profile.status)}.",
+            show_alert=True,
+        )
+        await _safe_remove_inline_keyboard(callback)
         return
 
     if action == "approve":
@@ -455,6 +694,12 @@ async def handle_moderation_callback(
                 profile.user.telegram_id,
                 "Анкета одобрена.\n"
                 "Теперь тебя смогут найти другие участники в разделе «Найти партнера».",
+                reply_markup=main_reply_keyboard(),
+            )
+            await bot.send_message(
+                profile.user.telegram_id,
+                "Что хочешь сделать дальше?",
+                reply_markup=approval_navigation_keyboard(),
             )
         except Exception as exc:  # noqa: BLE001 - owner may have blocked the bot.
             logger.warning(
@@ -464,15 +709,22 @@ async def handle_moderation_callback(
                 exc,
             )
         await callback.answer("Анкета одобрена.")
+        await _safe_remove_inline_keyboard(callback)
         if callback.message:
-            await callback.message.answer(f"Анкета #{profile.id} одобрена.")
+            await callback.message.answer("Решение сохранено: анкета одобрена.", reply_markup=main_reply_keyboard())
     elif action == "reject":
         await set_profile_status(db_session, profile, ProfileStatus.REJECTED)
         try:
             await bot.send_message(
                 profile.user.telegram_id,
                 "Анкета не прошла проверку.\n"
-                "Ты можешь отредактировать её и отправить на проверку повторно через /connect.",
+                "Ты можешь изменить её и отправить на проверку повторно.",
+                reply_markup=main_reply_keyboard(),
+            )
+            await bot.send_message(
+                profile.user.telegram_id,
+                "Что хочешь сделать дальше?",
+                reply_markup=rejection_navigation_keyboard(),
             )
         except Exception as exc:  # noqa: BLE001 - owner may have blocked the bot.
             logger.warning(
@@ -482,7 +734,13 @@ async def handle_moderation_callback(
                 exc,
             )
         await callback.answer("Анкета отклонена.")
+        await _safe_remove_inline_keyboard(callback)
         if callback.message:
-            await callback.message.answer(f"Анкета #{profile.id} отклонена.")
+            await callback.message.answer("Решение сохранено: анкета отклонена.", reply_markup=main_reply_keyboard())
     else:
         await callback.answer("Неизвестное действие.", show_alert=True)
+
+
+@router.callback_query(F.data.in_(STALE_CALLBACK_DATA) | F.data.startswith(CATEGORY_PREFIX))
+async def handle_stale_profile_callback(callback: CallbackQuery) -> None:
+    await _show_stale_callback_fallback(callback)

@@ -1,13 +1,31 @@
 import pytest
 
 from ds_chat_bot.db.constants import CATEGORIES, PROFILE_STATUSES, ProfileStatus
-from ds_chat_bot.profile_utils import format_profile_preview, is_valid_telegram_username, parse_optional_age
+from ds_chat_bot.profile_utils import (
+    format_detected_telegram_username,
+    format_profile_preview,
+    is_valid_telegram_username,
+    parse_optional_age,
+    stale_callback_message,
+)
 from ds_chat_bot.services import is_admin_telegram_id
 
 
 def test_admin_id_detection_uses_numeric_ids() -> None:
     assert is_admin_telegram_id(111, (111, 222)) is True
     assert is_admin_telegram_id(333, (111, 222)) is False
+
+
+def test_format_detected_telegram_username_adds_prefix_and_validates() -> None:
+    assert format_detected_telegram_username("ann_acme") == "@ann_acme"
+    assert format_detected_telegram_username("@ann_acme") == "@ann_acme"
+    assert format_detected_telegram_username(None) is None
+    assert format_detected_telegram_username("abcd") is None
+    assert format_detected_telegram_username("ann-acme") is None
+
+
+def test_stale_callback_message_points_to_menu() -> None:
+    assert stale_callback_message() == "Открой меню и выбери нужное действие."
 
 
 @pytest.mark.parametrize("value", ["@abcde", "@abc_123", "@A2345", "@" + "a" * 32])

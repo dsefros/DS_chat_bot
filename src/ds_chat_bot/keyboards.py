@@ -5,6 +5,13 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from ds_chat_bot.db.constants import CATEGORIES
+from ds_chat_bot.callbacks import (
+    DISCOVERY_CATEGORIES_CALLBACK,
+    DISCOVERY_CATEGORY_PREFIX,
+    DISCOVERY_LIKE_PREFIX,
+    DISCOVERY_MENU_CALLBACK,
+    DISCOVERY_SKIP_PREFIX,
+)
 
 MAIN_MENU_PROFILE_TEXT = "Заполнить / обновить анкету"
 MAIN_MENU_MY_PROFILE_TEXT = "Моя анкета"
@@ -175,6 +182,58 @@ def existing_profile_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="Изменить анкету", callback_data=PROFILE_EDIT_CALLBACK)],
             [InlineKeyboardButton(text="В меню", callback_data=CONNECT_MENU_CALLBACK)],
+        ]
+    )
+
+
+def discovery_blocked_keyboard() -> InlineKeyboardMarkup:
+    """Build navigation for users whose profile status blocks discovery."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=MAIN_MENU_MY_PROFILE_TEXT, callback_data=PROFILE_VIEW_CALLBACK)],
+            [InlineKeyboardButton(text="В меню", callback_data=CONNECT_MENU_CALLBACK)],
+        ]
+    )
+
+
+def discovery_categories_keyboard() -> InlineKeyboardMarkup:
+    """Build category selection keyboard for partner discovery."""
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for index in range(0, len(CATEGORIES), 2):
+        rows.append(
+            [
+                InlineKeyboardButton(text=category, callback_data=f"{DISCOVERY_CATEGORY_PREFIX}{category}")
+                for category in CATEGORIES[index : index + 2]
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="В меню", callback_data=DISCOVERY_MENU_CALLBACK)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def discovery_profile_keyboard(profile_id: int) -> InlineKeyboardMarkup:
+    """Build actions keyboard for a shown discovery profile card."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Интересно", callback_data=f"{DISCOVERY_LIKE_PREFIX}{profile_id}"),
+                InlineKeyboardButton(text="Пропустить", callback_data=f"{DISCOVERY_SKIP_PREFIX}{profile_id}"),
+            ],
+            [InlineKeyboardButton(text="Другая категория", callback_data=DISCOVERY_CATEGORIES_CALLBACK)],
+            [InlineKeyboardButton(text="В меню", callback_data=DISCOVERY_MENU_CALLBACK)],
+        ]
+    )
+
+
+def discovery_retry_keyboard() -> InlineKeyboardMarkup:
+    """Build discovery fallback keyboard for no-more and stale states."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Другая категория", callback_data=DISCOVERY_CATEGORIES_CALLBACK)],
+            [InlineKeyboardButton(text="В меню", callback_data=DISCOVERY_MENU_CALLBACK)],
         ]
     )
 

@@ -31,6 +31,19 @@ def configure_logging(level: str) -> None:
     )
 
 
+def create_bot_commands() -> list[BotCommand]:
+    """Build the public Telegram command list registered for the bot."""
+
+    return [
+        BotCommand(command="start", description="старт"),
+        BotCommand(command="connect", description="меню"),
+        BotCommand(command="profile", description="моя анкета"),
+        BotCommand(command="edit_profile", description="изменить анкету"),
+        BotCommand(command="find_partner", description="найти партнера"),
+        BotCommand(command="cancel", description="отменить текущее действие"),
+    ]
+
+
 async def run_bot() -> None:
     """Load settings and start the bot in long polling mode."""
 
@@ -55,15 +68,7 @@ async def run_bot() -> None:
     dispatcher.update.middleware(DbSessionMiddleware(session_factory))
     dispatcher.include_router(router)
 
-    await bot.set_my_commands(
-        [
-            BotCommand(command="start", description="старт"),
-            BotCommand(command="connect", description="меню"),
-            BotCommand(command="profile", description="моя анкета"),
-            BotCommand(command="edit_profile", description="изменить анкету"),
-            BotCommand(command="cancel", description="отменить текущее действие"),
-        ]
-    )
+    await bot.set_my_commands(create_bot_commands())
 
     logger.info("bot_running mode=long_polling")
     try:

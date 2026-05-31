@@ -1,18 +1,20 @@
 # DS_chat_bot
 
-MVP technical foundation for the Telegram bot of the “Давай сконнектимся” community.
+MVP Telegram bot for the “Давай сконнектимся” community.
 
-The project currently provides the foundation for future MVP work:
+The project currently provides:
 
 - aiogram 3 Telegram bot in long polling mode;
 - environment-based configuration;
 - Docker Compose local startup with PostgreSQL;
 - SQLAlchemy 2.x async ORM models for MVP data;
-- Alembic migrations for the initial database schema;
-- `/start`, `/connect`, and `/health` commands;
-- placeholder `/connect` menu actions that do not implement future features yet.
+- Alembic migrations for the database schema;
+- runtime database sessions for bot handlers;
+- `/start`, `/connect`, `/health`, `/profile`, and `/edit_profile` commands;
+- participant profile questionnaire with manual admin premoderation;
+- “Моя анкета” viewing and editing flow.
 
-Questionnaire collection, moderation, partner discovery, Random Coffee scheduling or pairing logic, admin flows, webhooks, web admin panels, and payment features are intentionally not implemented yet.
+Partner discovery/search, Random Coffee scheduling or pair generation, web admin panels, ChatKeeper-specific integrations beyond `/start` and `/connect` entry compatibility, and payment features are intentionally not implemented yet.
 
 ## Requirements
 
@@ -32,9 +34,11 @@ Questionnaire collection, moderation, partner discovery, Random Coffee schedulin
 
    ```dotenv
    BOT_TOKEN=<telegram bot token from BotFather>
-   ADMIN_TELEGRAM_IDS=<comma-separated admin Telegram IDs, for example 123456789,987654321>
+   ADMIN_TELEGRAM_IDS=<comma-separated numeric Telegram IDs, for example 123456789,987654321>
    MAIN_CHAT_ID=<main Telegram chat ID>
    ```
+
+   `ADMIN_TELEGRAM_IDS` must contain real numeric Telegram user IDs. These users receive moderation DMs and are the only users allowed to approve or reject profiles.
 
    Keep the remaining defaults unless you need to customize local PostgreSQL or logging:
 
@@ -47,24 +51,67 @@ Questionnaire collection, moderation, partner discovery, Random Coffee schedulin
    LOG_LEVEL=INFO
    ```
 
-3. Build and start the services:
+   `MAIN_CHAT_ID` is still required by configuration for future Random Coffee work, but it is not used by the questionnaire and moderation flow in this PR.
+
+3. Build and start PostgreSQL:
 
    ```bash
-   docker compose up --build
+   docker compose up -d postgres
    ```
 
-4. Apply database migrations in a second terminal:
+4. Apply database migrations before starting the bot:
 
    ```bash
    docker compose run --rm bot alembic upgrade head
    ```
 
-5. Confirm the bot is running:
+   The bot does **not** create tables at runtime. Schema changes are managed by Alembic only.
+
+5. Start the bot:
+
+   ```bash
+   docker compose up --build bot
+   ```
+
+6. Confirm the bot is running:
 
    - the bot container logs should include `bot_running mode=long_polling`;
    - send `/start` to the bot in Telegram;
-   - send `/connect` to open the placeholder menu;
+   - send `/start connect` or open a Telegram deep link with `?start=connect` to open the connect menu directly;
+   - send `/connect` to open the menu;
    - send `/health` to receive a lightweight running check.
+
+## Profile questionnaire and moderation
+
+The `/connect` menu now contains real profile actions:
+
+- `Заполнить / обновить анкету` — starts the participant questionnaire;
+- `Моя анкета` — shows the current profile and moderation status.
+
+The following menu actions remain placeholders and reply with `Этот раздел появится в следующей версии MVP.`:
+
+- `Найти партнера`;
+- `Random Coffee`.
+
+The questionnaire collects name, company, category, position, functional responsibilities, tasks, optional company site, optional hobbies, optional age, optional city, Telegram username, and whether the Telegram username may be revealed later after another participant clicks `Интересно`.
+
+Before submission, the user sees a full preview. Confirming the preview creates or updates the profile with status `pending_review`; profiles are never auto-approved. Editing an approved, rejected, or hidden profile resubmits it to `pending_review` for manual premoderation.
+
+After submission, every configured admin receives a DM with the full profile, Telegram user metadata, and `Одобрить` / `Отклонить` buttons. Failed admin DMs are logged as warnings and do not block the user flow. Non-admin users cannot use moderation callbacks.
+
+When an admin approves a profile, the profile owner receives an approval message. When an admin rejects a profile, the owner receives a rejection message and can edit/resubmit through `/connect`.
+
+## Profile statuses
+
+Profiles use these lifecycle statuses:
+
+- `draft` — черновик;
+- `pending_review` — на проверке у администратора;
+- `approved` — одобрена;
+- `rejected` — отклонена, может быть отредактирована и отправлена повторно;
+- `hidden` — скрыта. In this MVP, editing and submitting a hidden profile moves it back to `pending_review`.
+
+Only `approved` profiles are intended to be visible in the future `Найти партнера` discovery flow. Discovery itself is not implemented yet.
 
 ## Database migrations
 
@@ -97,28 +144,24 @@ alembic upgrade head
 
 ### Tables created by the initial migration
 
-The initial migration creates the MVP persistence schema only:
+The initial migration creates the MVP persistence schema:
 
 - `users` — Telegram users known by the bot;
 - `profiles` — participant questionnaires and review status;
-- `profile_views` — viewed, liked, skipped, and contact reveal events;
-- `random_coffee_rounds` — weekly Random Coffee rounds;
+- `profile_views` — viewed, liked, skipped, and contact reveal events for future discovery;
+- `random_coffee_rounds` — weekly Random Coffee rounds for future scheduling;
 - `random_coffee_answers` — one poll answer per user per round;
 - `random_coffee_pairs` — generated pair or trio records for future Random Coffee logic.
 
-This PR only defines database infrastructure, constants, ORM models, constraints, and migrations. Handlers and business logic for profile forms, admin approval, partner discovery, and Random Coffee are not implemented yet.
-
 ## Commands
 
-- `/start` — shows the introductory community bot text.
-- `/connect` — shows the MVP placeholder menu.
+- `/start` — upserts the Telegram user and shows the introductory community bot text.
+- `/start connect` — upserts the Telegram user and opens the `/connect` menu.
+- `/connect`, `/Connect`, `/CONNECT` — upsert the Telegram user and open the MVP menu.
+- `/profile` — shows `Моя анкета` with status or suggests creating a profile.
+- `/edit_profile` — starts the questionnaire from the beginning.
+- `/cancel` — cancels the active questionnaire FSM state.
 - `/health` — replies that the bot process is running. It intentionally does not require database connectivity.
-
-All `/connect` menu buttons currently reply with:
-
-```text
-Этот раздел появится в следующей версии MVP.
-```
 
 ## Configuration
 

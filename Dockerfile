@@ -9,6 +9,8 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
+COPY alembic.ini ./
+COPY migrations ./migrations
 COPY src ./src
 ENV PYTHONPATH=/app/src
 

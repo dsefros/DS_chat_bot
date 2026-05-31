@@ -31,10 +31,30 @@ def parse_optional_age(value: str) -> int | None:
     return int(stripped)
 
 
+def format_detected_telegram_username(username: str | None) -> str | None:
+    """Format Telegram-provided username as @username when it is profile-safe."""
+
+    if username is None:
+        return None
+    stripped = username.strip().removeprefix("@")
+    if not stripped:
+        return None
+    formatted = f"@{stripped}"
+    if not is_valid_telegram_username(formatted):
+        return None
+    return formatted
+
+
 def is_valid_telegram_username(value: str) -> bool:
     """Validate a required @username in Telegram username format."""
 
     return bool(TELEGRAM_USERNAME_RE.fullmatch(value.strip()))
+
+
+def stale_callback_message() -> str:
+    """Return the user-facing message shown for stale inline buttons."""
+
+    return "Открой меню и выбери нужное действие."
 
 
 def _empty(value: object) -> str:

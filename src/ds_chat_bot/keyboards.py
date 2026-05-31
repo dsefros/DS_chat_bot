@@ -2,12 +2,25 @@
 
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from ds_chat_bot.db.constants import CATEGORIES
 
+MAIN_MENU_PROFILE_TEXT = "Заполнить / обновить анкету"
+MAIN_MENU_MY_PROFILE_TEXT = "Моя анкета"
+MAIN_MENU_PARTNER_SEARCH_TEXT = "Найти партнера"
+MAIN_MENU_RANDOM_COFFEE_TEXT = "Random Coffee"
+MAIN_MENU_TEXTS = {
+    MAIN_MENU_PROFILE_TEXT,
+    MAIN_MENU_MY_PROFILE_TEXT,
+    MAIN_MENU_PARTNER_SEARCH_TEXT,
+    MAIN_MENU_RANDOM_COFFEE_TEXT,
+}
+
 PROFILE_START_CALLBACK = "profile:start"
 PROFILE_VIEW_CALLBACK = "profile:view"
+PROFILE_EDIT_CALLBACK = "profile:update:edit"
+PROFILE_RESTART_CALLBACK = "profile:update:restart"
 CONNECT_MENU_CALLBACK = "menu:connect"
 PARTNER_SEARCH_CALLBACK = "placeholder:partner_search"
 RANDOM_COFFEE_CALLBACK = "placeholder:random_coffee"
@@ -17,19 +30,36 @@ PREVIEW_SUBMIT_CALLBACK = "profile:submit"
 PREVIEW_RESTART_CALLBACK = "profile:restart"
 ALLOW_CONTACT_YES_CALLBACK = "profile:allow_contact:yes"
 ALLOW_CONTACT_NO_CALLBACK = "profile:allow_contact:no"
+USERNAME_USE_DETECTED_CALLBACK = "profile:telegram_username:use_detected"
+USERNAME_ENTER_MANUAL_CALLBACK = "profile:telegram_username:enter_manual"
+ACTIVE_FORM_CONTINUE_CALLBACK = "profile:active:continue"
+ACTIVE_FORM_CANCEL_TO_MENU_CALLBACK = "profile:active:cancel_to_menu"
 CATEGORY_PREFIX = "profile:category:"
 MODERATE_PREFIX = "moderate:"
 
 
+def main_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Build the persistent main navigation reply keyboard."""
+
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=MAIN_MENU_PROFILE_TEXT), KeyboardButton(text=MAIN_MENU_MY_PROFILE_TEXT)],
+            [KeyboardButton(text=MAIN_MENU_PARTNER_SEARCH_TEXT), KeyboardButton(text=MAIN_MENU_RANDOM_COFFEE_TEXT)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
 def connect_menu_keyboard() -> InlineKeyboardMarkup:
-    """Build the main menu for the /connect command."""
+    """Build the inline /connect menu."""
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Заполнить / обновить анкету", callback_data=PROFILE_START_CALLBACK)],
-            [InlineKeyboardButton(text="Найти партнера", callback_data=PARTNER_SEARCH_CALLBACK)],
-            [InlineKeyboardButton(text="Random Coffee", callback_data=RANDOM_COFFEE_CALLBACK)],
-            [InlineKeyboardButton(text="Моя анкета", callback_data=PROFILE_VIEW_CALLBACK)],
+            [InlineKeyboardButton(text=MAIN_MENU_PROFILE_TEXT, callback_data=PROFILE_START_CALLBACK)],
+            [InlineKeyboardButton(text=MAIN_MENU_MY_PROFILE_TEXT, callback_data=PROFILE_VIEW_CALLBACK)],
+            [InlineKeyboardButton(text=MAIN_MENU_PARTNER_SEARCH_TEXT, callback_data=PARTNER_SEARCH_CALLBACK)],
+            [InlineKeyboardButton(text=MAIN_MENU_RANDOM_COFFEE_TEXT, callback_data=RANDOM_COFFEE_CALLBACK)],
         ]
     )
 
@@ -72,6 +102,55 @@ def allow_contact_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def username_confirmation_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Да, использовать", callback_data=USERNAME_USE_DETECTED_CALLBACK)],
+            [InlineKeyboardButton(text="Указать другой", callback_data=USERNAME_ENTER_MANUAL_CALLBACK)],
+            [InlineKeyboardButton(text="Отмена", callback_data=CANCEL_CALLBACK)],
+        ]
+    )
+
+
+def active_questionnaire_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Продолжить заполнение", callback_data=ACTIVE_FORM_CONTINUE_CALLBACK)],
+            [InlineKeyboardButton(text="Отменить и открыть меню", callback_data=ACTIVE_FORM_CANCEL_TO_MENU_CALLBACK)],
+        ]
+    )
+
+
+def profile_update_entry_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Изменить анкету", callback_data=PROFILE_EDIT_CALLBACK)],
+            [InlineKeyboardButton(text="Заполнить заново", callback_data=PROFILE_RESTART_CALLBACK)],
+            [InlineKeyboardButton(text=MAIN_MENU_MY_PROFILE_TEXT, callback_data=PROFILE_VIEW_CALLBACK)],
+            [InlineKeyboardButton(text="В меню", callback_data=CONNECT_MENU_CALLBACK)],
+        ]
+    )
+
+
+def approval_navigation_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=MAIN_MENU_MY_PROFILE_TEXT, callback_data=PROFILE_VIEW_CALLBACK)],
+            [InlineKeyboardButton(text="В меню", callback_data=CONNECT_MENU_CALLBACK)],
+        ]
+    )
+
+
+def rejection_navigation_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Изменить анкету", callback_data=PROFILE_EDIT_CALLBACK)],
+            [InlineKeyboardButton(text=MAIN_MENU_MY_PROFILE_TEXT, callback_data=PROFILE_VIEW_CALLBACK)],
+            [InlineKeyboardButton(text="В меню", callback_data=CONNECT_MENU_CALLBACK)],
+        ]
+    )
+
+
 def preview_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -94,7 +173,7 @@ def no_profile_keyboard() -> InlineKeyboardMarkup:
 def existing_profile_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Изменить анкету", callback_data=PROFILE_START_CALLBACK)],
+            [InlineKeyboardButton(text="Изменить анкету", callback_data=PROFILE_EDIT_CALLBACK)],
             [InlineKeyboardButton(text="В меню", callback_data=CONNECT_MENU_CALLBACK)],
         ]
     )

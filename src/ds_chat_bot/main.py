@@ -9,6 +9,7 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 
 from ds_chat_bot.config import SettingsError, load_settings
 from ds_chat_bot.db.session import (
@@ -53,6 +54,16 @@ async def run_bot() -> None:
     dispatcher = Dispatcher()
     dispatcher.update.middleware(DbSessionMiddleware(session_factory))
     dispatcher.include_router(router)
+
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="старт"),
+            BotCommand(command="connect", description="меню"),
+            BotCommand(command="profile", description="моя анкета"),
+            BotCommand(command="edit_profile", description="изменить анкету"),
+            BotCommand(command="cancel", description="отменить текущее действие"),
+        ]
+    )
 
     logger.info("bot_running mode=long_polling")
     try:

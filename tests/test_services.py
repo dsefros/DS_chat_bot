@@ -2,8 +2,13 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any
 
+from ds_chat_bot.db.constants import ProfileStatus
 from ds_chat_bot.db.models import User
-from ds_chat_bot.services import upsert_user_from_telegram
+from ds_chat_bot.services import (
+    is_profile_moderation_decided,
+    profile_status_label,
+    upsert_user_from_telegram,
+)
 
 
 class _Result:
@@ -84,3 +89,11 @@ def test_upsert_user_updates_existing_user_but_preserves_is_blocked() -> None:
         assert session.refreshed is user
 
     asyncio.run(run())
+
+
+def test_moderation_decision_helpers_are_idempotency_friendly() -> None:
+    assert is_profile_moderation_decided(ProfileStatus.APPROVED.value) is True
+    assert is_profile_moderation_decided(ProfileStatus.REJECTED.value) is True
+    assert is_profile_moderation_decided(ProfileStatus.PENDING_REVIEW.value) is False
+    assert profile_status_label(ProfileStatus.APPROVED.value) == "одобрена"
+    assert profile_status_label(ProfileStatus.REJECTED.value) == "отклонена"

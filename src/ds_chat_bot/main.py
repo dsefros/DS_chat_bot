@@ -11,6 +11,11 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from ds_chat_bot.config import SettingsError, load_settings
+from ds_chat_bot.db.session import (
+    DbSessionMiddleware,
+    create_engine,
+    create_session_factory,
+)
 from ds_chat_bot.handlers import router
 
 logger = logging.getLogger(__name__)
@@ -38,15 +43,23 @@ async def run_bot() -> None:
         len(settings.admin_telegram_ids),
     )
 
+    engine = create_engine(settings.database_url)
+    session_factory = create_session_factory(engine)
+
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dispatcher = Dispatcher()
+    dispatcher.update.middleware(DbSessionMiddleware(session_factory))
     dispatcher.include_router(router)
 
     logger.info("bot_running mode=long_polling")
-    await dispatcher.start_polling(bot)
+    try:
+        await dispatcher.start_polling(bot, settings=settings)
+    finally:
+        await engine.dispose()
+        await bot.session.close()
 
 
 def main() -> None:

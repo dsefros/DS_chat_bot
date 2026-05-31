@@ -17,7 +17,6 @@ from ds_chat_bot.keyboards import (
     PARTNER_SEARCH_CALLBACK,
     RANDOM_COFFEE_CALLBACK,
     active_questionnaire_keyboard,
-    connect_menu_keyboard,
     main_reply_keyboard,
 )
 from ds_chat_bot.profile_handlers import (
@@ -32,7 +31,9 @@ router = Router(name="main")
 
 START_TEXT = """Привет! Это бот сообщества «Давай сконнектимся».
 
-Здесь можно заполнить анкету участника и отправить её на проверку администратору."""
+Здесь можно заполнить анкету участника и отправить её на проверку администратору.
+
+Выбери действие в меню ниже."""
 
 CONNECT_TEXT = "Что хочешь сделать?"
 COMING_SOON_TEXT = "Этот раздел появится в следующей версии MVP."
@@ -40,10 +41,9 @@ HEALTH_TEXT = "Бот работает."
 
 
 async def send_connect_menu(message: Message) -> None:
-    """Send the main menu with persistent and inline navigation."""
+    """Send the main menu using only the persistent reply keyboard."""
 
     await message.answer(CONNECT_TEXT, reply_markup=main_reply_keyboard())
-    await message.answer(CONNECT_TEXT, reply_markup=connect_menu_keyboard())
 
 
 async def _show_active_questionnaire_guard(message: Message) -> None:
@@ -80,7 +80,6 @@ async def handle_start(
         await send_connect_menu(message)
         return
     await message.answer(START_TEXT, reply_markup=main_reply_keyboard())
-    await send_connect_menu(message)
 
 
 @router.message(Command("connect", ignore_case=True))

@@ -14,7 +14,7 @@ The project currently provides:
 - participant profile questionnaire with manual admin premoderation;
 - “Моя анкета” viewing and editing flow.
 
-Partner discovery/search, Random Coffee scheduling or pair generation, web admin panels, ChatKeeper-specific integrations beyond `/start` and `/connect` entry compatibility, and payment features are intentionally not implemented yet.
+Random Coffee scheduling or pair generation, web admin panels, ChatKeeper-specific integrations beyond `/start` and `/connect` entry compatibility, and payment features are intentionally not implemented yet.
 
 ## Requirements
 
@@ -88,10 +88,7 @@ The `/connect` menu now contains real profile actions:
 - `Заполнить / обновить анкету` — starts the participant questionnaire;
 - `Моя анкета` — shows the current profile and moderation status.
 
-The following menu actions remain placeholders and reply with `Этот раздел появится в следующей версии MVP.`:
-
-- `Найти партнера`;
-- `Random Coffee`.
+The `Найти партнера` menu action opens the partner discovery flow. `Random Coffee` remains a placeholder and replies with `Этот раздел появится в следующей версии MVP.`.
 
 The questionnaire collects name, company, category, position, functional responsibilities, tasks, optional company site, optional hobbies, optional age, optional city, Telegram username, and whether the Telegram username may be revealed later after another participant clicks `Интересно`.
 
@@ -100,6 +97,21 @@ Before submission, the user sees a full preview. Confirming the preview creates 
 After submission, every configured admin receives a DM with the full profile, Telegram user metadata, and `Одобрить` / `Отклонить` buttons. Failed admin DMs are logged as warnings and do not block the user flow. Non-admin users cannot use moderation callbacks.
 
 When an admin approves a profile, the profile owner receives an approval message. When an admin rejects a profile, the owner receives a rejection message and can edit/resubmit through `/connect`.
+
+## Partner discovery: “Найти партнера”
+
+The `Найти партнера` flow is available only to users whose own participant profile has status `approved`. Users without a profile are asked to fill out the questionnaire first; users with pending, rejected, draft, or hidden profiles receive a status-specific explanation and navigation buttons.
+
+In discovery, the user chooses one of the existing profile categories and sees one approved participant card at a time from that category. Cards do not expose Telegram usernames, profile IDs, internal user IDs, moderation status, or contact reveal flags. The bot never shows the viewer their own profile and does not show profiles whose owners are blocked.
+
+Under each card, the user can choose:
+
+- `Интересно` — records a `liked` profile view event. If the profile owner allowed contact reveal, the bot also records `contact_revealed` and shows the Telegram username; otherwise it explains that the username is not available.
+- `Пропустить` — records a `skipped` profile view event.
+- `Другая категория` — returns to category selection.
+- `В меню` — returns to the persistent main menu.
+
+Profiles already liked or skipped by the same viewer are excluded from future discovery results, so the same terminal decision is not shown repeatedly. When a category has no remaining cards, the bot asks the user to choose another category or come back later.
 
 ## Profile statuses
 
@@ -111,7 +123,7 @@ Profiles use these lifecycle statuses:
 - `rejected` — отклонена, может быть отредактирована и отправлена повторно;
 - `hidden` — скрыта. In this MVP, editing and submitting a hidden profile moves it back to `pending_review`.
 
-Only `approved` profiles are intended to be visible in the future `Найти партнера` discovery flow. Discovery itself is not implemented yet.
+Only `approved` profiles are visible in the `Найти партнера` discovery flow. Draft, pending, rejected, and hidden profiles cannot browse discovery until their own profile is approved.
 
 ## Database migrations
 
@@ -160,6 +172,7 @@ The initial migration creates the MVP persistence schema:
 - `/connect`, `/Connect`, `/CONNECT` — upsert the Telegram user and open the MVP menu.
 - `/profile` — shows `Моя анкета` with status or suggests creating a profile.
 - `/edit_profile` — starts the questionnaire from the beginning.
+- `/find_partner` — opens the `Найти партнера` discovery flow.
 - `/cancel` — cancels the active questionnaire FSM state.
 - `/health` — replies that the bot process is running. It intentionally does not require database connectivity.
 

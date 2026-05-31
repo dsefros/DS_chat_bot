@@ -6,6 +6,7 @@ from ds_chat_bot.keyboards import (
     MAIN_MENU_PROFILE_TEXT,
     MAIN_MENU_RANDOM_COFFEE_TEXT,
     active_questionnaire_keyboard,
+    discovery_blocked_keyboard,
     main_reply_keyboard,
     profile_update_entry_keyboard,
     username_confirmation_keyboard,
@@ -44,3 +45,11 @@ def test_profile_update_entry_keyboard_has_required_choices() -> None:
     texts = [button.text for row in profile_update_entry_keyboard().inline_keyboard for button in row]
 
     assert texts == ["Изменить анкету", "Заполнить заново", "Моя анкета", "В меню"]
+
+
+def test_discovery_blocked_keyboard_has_profile_and_menu_navigation() -> None:
+    keyboard = discovery_blocked_keyboard()
+
+    assert isinstance(keyboard, InlineKeyboardMarkup)
+    texts = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert texts == ["Моя анкета", "В меню"]
